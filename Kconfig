@@ -1,0 +1,7 @@
+# Pull in Zephyr’s base Kconfig so standard symbols (LOG, GPIO, etc.) exist.
+source "Kconfig.zephyr"
+
+menu "Kinesis Bridge Settings"
+# (Add app-specific options here later.)
+endmenu
+

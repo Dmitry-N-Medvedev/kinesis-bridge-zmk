@@ -1,0 +1,55 @@
+cmake:
+  application:
+    configuration-dir: /Users/dmitrymedvedev/projects/kinesis-bridge-zmk
+    source-dir: /Users/dmitrymedvedev/projects/kinesis-bridge-zmk
+  board:
+    name: nrf52840dongle
+    path:
+     - /Users/dmitrymedvedev/ncs-workspace/zephyr/boards/nordic/nrf52840dongle
+    qualifiers: nrf52840
+    revision: 
+  devicetree:
+    bindings-dirs:
+     - /Users/dmitrymedvedev/ncs-workspace/nrf/dts/bindings
+     - /Users/dmitrymedvedev/ncs-workspace/zephyr/dts/bindings
+    files:
+     - /Users/dmitrymedvedev/ncs-workspace/zephyr/boards/nordic/nrf52840dongle/nrf52840dongle_nrf52840.dts
+    include-dirs:
+     - /Users/dmitrymedvedev/ncs-workspace/nrf/include
+     - /Users/dmitrymedvedev/ncs-workspace/nrf/dts/common
+     - /Users/dmitrymedvedev/ncs-workspace/nrf/dts/riscv
+     - /Users/dmitrymedvedev/ncs-workspace/nrf/dts/arm
+     - /Users/dmitrymedvedev/ncs-workspace/nrf/dts
+     - /Users/dmitrymedvedev/ncs-workspace/zephyr/include
+     - /Users/dmitrymedvedev/ncs-workspace/zephyr/include/zephyr
+     - /Users/dmitrymedvedev/ncs-workspace/zephyr/dts/common
+     - /Users/dmitrymedvedev/ncs-workspace/zephyr/dts/x86
+     - /Users/dmitrymedvedev/ncs-workspace/zephyr/dts/xtensa
+     - /Users/dmitrymedvedev/ncs-workspace/zephyr/dts/sparc
+     - /Users/dmitrymedvedev/ncs-workspace/zephyr/dts/riscv
+     - /Users/dmitrymedvedev/ncs-workspace/zephyr/dts/posix
+     - /Users/dmitrymedvedev/ncs-workspace/zephyr/dts/nios2
+     - /Users/dmitrymedvedev/ncs-workspace/zephyr/dts/arm64
+     - /Users/dmitrymedvedev/ncs-workspace/zephyr/dts/arm
+     - /Users/dmitrymedvedev/ncs-workspace/zephyr/dts/arc
+     - /Users/dmitrymedvedev/ncs-workspace/zephyr/dts
+  kconfig:
+    files:
+     - /Users/dmitrymedvedev/ncs-workspace/zephyr/boards/nordic/nrf52840dongle/nrf52840dongle_nrf52840_defconfig
+     - /Users/dmitrymedvedev/projects/kinesis-bridge-zmk/prj.conf
+    user-files:
+     - /Users/dmitrymedvedev/projects/kinesis-bridge-zmk/prj.conf
+  toolchain:
+    name: zephyr
+    path: /Users/dmitrymedvedev/zephyr-sdk/zephyr-sdk-0.17.2
+  vendor-specific:
+    nordic:
+      svdfile: /Users/dmitrymedvedev/ncs-workspace/modules/hal/nordic/nrfx/mdk/nrf52840.svd
+  zephyr:
+    version: 4.0.99
+    zephyr-base: /Users/dmitrymedvedev/ncs-workspace/zephyr
+version: 0.1.0
+west:
+  command: /Users/dmitrymedvedev/.local/bin/west build -p always --pristine --no-sysbuild -b nrf52840dongle -s /Users/dmitrymedvedev/projects/kinesis-bridge-zmk --build-dir /Users/dmitrymedvedev/projects/kinesis-bridge-zmk/build -- -DZEPHYR_TOOLCHAIN_VARIANT=zephyr -DZEPHYR_SDK_INSTALL_DIR=/Users/dmitrymedvedev/zephyr-sdk/zephyr-sdk-0.17.2 -DCMAKE_LINKER=/Users/dmitrymedvedev/zephyr-sdk/zephyr-sdk-0.17.2/arm-zephyr-eabi/bin/arm-zephyr-eabi-ld.bfd -DCMAKE_AR=/Users/dmitrymedvedev/zephyr-sdk/zephyr-sdk-0.17.2/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc-ar -DCMAKE_NM=/Users/dmitrymedvedev/zephyr-sdk/zephyr-sdk-0.17.2/arm-zephyr-eabi/bin/arm-zephyr-eabi-nm -DCMAKE_OBJCOPY=/Users/dmitrymedvedev/zephyr-sdk/zephyr-sdk-0.17.2/arm-zephyr-eabi/bin/arm-zephyr-eabi-objcopy -DCMAKE_OBJDUMP=/Users/dmitrymedvedev/zephyr-sdk/zephyr-sdk-0.17.2/arm-zephyr-eabi/bin/arm-zephyr-eabi-objdump -DCMAKE_RANLIB=/Users/dmitrymedvedev/zephyr-sdk/zephyr-sdk-0.17.2/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc-ranlib
+  topdir: /Users/dmitrymedvedev/ncs-workspace
+  version: 1.4.0

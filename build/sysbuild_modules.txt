@@ -1,0 +1,2 @@
+"nrf":"/Users/dmitrymedvedev/ncs-workspace/nrf":"/Users/dmitrymedvedev/ncs-workspace/nrf/sysbuild"
+"mcuboot":"/Users/dmitrymedvedev/ncs-workspace/bootloader/mcuboot":"/Users/dmitrymedvedev/ncs-workspace/bootloader/mcuboot/boot/zephyr/sysbuild"
