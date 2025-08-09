@@ -1,2 +1,0 @@
-# Load board Kconfig descriptions.
-osource "/Users/dmitrymedvedev/ncs-workspace/zephyr/boards/nordic/nrf52840dongle/Kconfig.nrf52840dongle"
