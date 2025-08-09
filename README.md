@@ -46,6 +46,24 @@ Put the dongle into DFU mode (hold RESET while plugging into USB, then release).
 ./build.sh
 ```
 
+### After flashing, unplug/replug the dongle. A new USB serial device should appear, e.g. /dev/tty.usbmodemXXXXXXXX. Open it (don’t use the DFU port; use the CDC-ACM one)
+
+```bash
+```
+screen /dev/tty.usbmodem* 115200
+```
+```
+
+
+### Press the dongle button. You should see lines like
+
+```bash
+```
+[SCAN] XX:XX:XX:XX:XX:XX (random) RSSI -52 NAME Kinesis Advantage360 Pro
+```
+
+```
+
 ## Defaults in build.sh:
 
 - Builds the app from the current project directory (`APP=$PWD`)
@@ -53,7 +71,7 @@ Put the dongle into DFU mode (hold RESET while plugging into USB, then release).
 - Produces `app_dfu.zip` in the project root
 - Flashes to `/dev/tty.usbmodemD5606742A6991` (auto-detects another /dev/tty.usbmodem* if not present)
 
-Override examples:
+## Override examples:
 
 ```bash
 APP=/path/to/app ./build.sh
