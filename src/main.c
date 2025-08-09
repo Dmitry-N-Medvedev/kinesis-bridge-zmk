@@ -65,11 +65,11 @@ static void button_work_handler(struct k_work *work)
 
 	bool pressed = button_pressed();
 	if (pressed) {
-		LOG_INF("BUTTON: PRESSED");
+		LOG_INF("BUTTON: RELEASED");
 		/* LED on while pressed (handles active-low via DT flags) */
 		gpio_pin_set_dt(&led, 1);
 	} else {
-		LOG_INF("BUTTON: RELEASED");
+		LOG_INF("BUTTON: PRESSED");
 		gpio_pin_set_dt(&led, 0);
 	}
 }
