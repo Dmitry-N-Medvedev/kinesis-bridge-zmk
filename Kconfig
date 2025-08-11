@@ -1,0 +1,27 @@
+# Kinesis BLE Bridge Application Configuration
+
+source "Kconfig.zephyr"
+
+menu "Kinesis Bridge Settings"
+
+config BRIDGE_AUTO_RECONNECT
+    bool "Auto-reconnect to keyboard"
+    default y
+    help
+      Automatically reconnect to the keyboard if connection is lost
+
+config BRIDGE_SCAN_TIMEOUT
+    int "Scan timeout in seconds (0 = infinite)"
+    default 0
+    range 0 300
+    help
+      How long to scan for the keyboard before giving up (0 = never give up)
+
+config BRIDGE_TARGET_NAME
+    string "Target keyboard BLE name"
+    default "Adv360 Pro"
+    help
+      The BLE advertised name of your Kinesis keyboard
+
+endmenu
+
