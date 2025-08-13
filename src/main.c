@@ -74,7 +74,8 @@ static bt_addr_le_t keyboard_addr;
 static bool keyboard_paired = false;
 
 /* HID Report Buffer */
-static uint8_t hid_report[8] = {0};
+#define HID_BOOT_REPORT_SIZE 8
+static uint8_t hid_report[HID_BOOT_REPORT_SIZE] = {0};
 static bool usb_configured = false;
 static const struct device *hid_dev;
 
@@ -140,9 +141,26 @@ static uint8_t notify_func(struct bt_conn *conn,
         return BT_GATT_ITER_STOP;
     }
 
-    if (length >= 8) {
-        /* Copy the BLE HID report */
-        memcpy(hid_report, data, 8);
+    /* Validate report length and copy safely */
+    if (length > 0) {
+        size_t copy_len = MIN(length, sizeof(hid_report));
+        
+        /* Clear report buffer first to ensure no stale data */
+        memset(hid_report, 0, sizeof(hid_report));
+        
+        /* Copy the received data */
+        memcpy(hid_report, data, copy_len);
+        
+        /* Log if we received unexpected report size */
+        if (length != HID_BOOT_REPORT_SIZE) {
+            LOG_WRN("Received HID report of %u bytes (expected %u)", 
+                    length, HID_BOOT_REPORT_SIZE);
+            
+            /* If report is longer, we might be getting NKRO or Report ID */
+            if (length > HID_BOOT_REPORT_SIZE) {
+                LOG_WRN("Report may include Report ID or be NKRO format");
+            }
+        }
         
         /* Forward to USB if configured */
         if (usb_configured && hid_dev) {
@@ -152,10 +170,15 @@ static uint8_t notify_func(struct bt_conn *conn,
             }
         }
         
-        /* Debug output */
-        LOG_DBG("HID Report: %02x %02x %02x %02x %02x %02x %02x %02x",
-                hid_report[0], hid_report[1], hid_report[2], hid_report[3],
-                hid_report[4], hid_report[5], hid_report[6], hid_report[7]);
+        /* Debug output - only log first few bytes to avoid spam */
+        LOG_DBG("HID Report (%u bytes): %02x %02x %02x %02x...",
+                length,
+                (length > 0) ? ((uint8_t*)data)[0] : 0,
+                (length > 1) ? ((uint8_t*)data)[1] : 0,
+                (length > 2) ? ((uint8_t*)data)[2] : 0,
+                (length > 3) ? ((uint8_t*)data)[3] : 0);
+    } else {
+        LOG_WRN("Received empty HID report");
     }
 
     return BT_GATT_ITER_CONTINUE;
@@ -345,10 +368,13 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
     }
     k_mutex_unlock(&conn_mutex);
 
-    /* Clear HID report on disconnect */
-    memset(hid_report, 0, sizeof(hid_report));
+    /* Clear HID report on disconnect - but only if USB is ready */
     if (usb_configured && hid_dev) {
-        hid_int_ep_write(hid_dev, hid_report, sizeof(hid_report), NULL);
+        memset(hid_report, 0, sizeof(hid_report));
+        int ret = hid_int_ep_write(hid_dev, hid_report, sizeof(hid_report), NULL);
+        if (ret < 0 && ret != -EAGAIN) {
+            LOG_ERR("Failed to send clear report: %d", ret);
+        }
     }
 
     /* Try to reconnect to the same keyboard */
@@ -398,7 +424,7 @@ static bool device_found(struct bt_data *data, void *user_data)
             k_sleep(K_MSEC(100));
 
             /* Create connection */
-            struct bt_conn *conn;
+            struct bt_conn *conn = NULL;
             struct bt_le_conn_param *param = BT_LE_CONN_PARAM_DEFAULT;
             
             err = bt_conn_le_create(addr, BT_CONN_LE_CREATE_CONN,
@@ -407,7 +433,7 @@ static bool device_found(struct bt_data *data, void *user_data)
                 LOG_ERR("Create connection failed (err %d)", err);
                 k_sleep(K_SECONDS(1));
                 start_scan();
-            } else {
+            } else if (conn) {
                 /* Connection initiated successfully */
                 bt_conn_unref(conn);
             }
@@ -474,7 +500,7 @@ void attempt_reconnect(void)
 
     LOG_INF("Attempting direct reconnection to saved keyboard");
     
-    struct bt_conn *conn;
+    struct bt_conn *conn = NULL;
     struct bt_le_conn_param *param = BT_LE_CONN_PARAM_DEFAULT;
     
     int err = bt_conn_le_create(&keyboard_addr, BT_CONN_LE_CREATE_CONN,
@@ -482,7 +508,7 @@ void attempt_reconnect(void)
     if (err) {
         LOG_ERR("Direct reconnection failed (err %d), starting scan", err);
         start_scan();
-    } else {
+    } else if (conn) {
         LOG_INF("Direct reconnection initiated");
         bt_conn_unref(conn);
     }
