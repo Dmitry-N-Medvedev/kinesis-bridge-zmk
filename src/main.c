@@ -16,6 +16,7 @@
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/keys.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/settings/settings.h>
 
@@ -212,6 +213,9 @@ static void subscribe_to_reports(struct bt_conn *conn, uint16_t value_handle)
     } else {
         LOG_INF("Subscribed to HID reports");
     }
+    
+    /* Clear discovery params as we're done with discovery */
+    memset(&discover_params, 0, sizeof(discover_params));
 }
 
 /* GATT Discovery callbacks */
@@ -282,6 +286,71 @@ static uint8_t discover_func(struct bt_conn *conn,
 void start_scan(void);
 void attempt_reconnect(void);
 
+/* BLE Security callbacks */
+static void auth_passkey_display(struct bt_conn *conn, unsigned int passkey)
+{
+    char addr[BT_ADDR_LE_STR_LEN];
+    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+    LOG_INF("Passkey for %s: %06u", addr, passkey);
+}
+
+static void auth_passkey_entry(struct bt_conn *conn)
+{
+    char addr[BT_ADDR_LE_STR_LEN];
+    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+    LOG_INF("Enter passkey for %s, using fixed: 123456", addr);
+    bt_conn_auth_passkey_entry(conn, 123456);
+}
+
+static void auth_passkey_confirm(struct bt_conn *conn, unsigned int passkey)
+{
+    char addr[BT_ADDR_LE_STR_LEN];
+    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+    LOG_INF("Passkey confirmation for %s: %06u", addr, passkey);
+    LOG_INF("Auto-confirming passkey");
+    bt_conn_auth_passkey_confirm(conn);
+}
+
+static void auth_cancel(struct bt_conn *conn)
+{
+    char addr[BT_ADDR_LE_STR_LEN];
+    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+    LOG_WRN("Pairing cancelled: %s", addr);
+}
+
+static void pairing_complete(struct bt_conn *conn, bool bonded)
+{
+    char addr[BT_ADDR_LE_STR_LEN];
+    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+    LOG_INF("Pairing %s with %s", bonded ? "completed" : "failed", addr);
+    
+    if (bonded) {
+        /* Save that we're bonded for this device */
+        memcpy(&keyboard_addr, bt_conn_get_dst(conn), sizeof(keyboard_addr));
+        keyboard_paired = true;
+        settings_save_one("ble_bridge/addr", &keyboard_addr, sizeof(keyboard_addr));
+    }
+}
+
+static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
+{
+    char addr[BT_ADDR_LE_STR_LEN];
+    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+    LOG_ERR("Pairing failed with %s, reason %d", addr, reason);
+}
+
+static struct bt_conn_auth_cb auth_cb_display = {
+    .passkey_display = auth_passkey_display,
+    .passkey_entry = auth_passkey_entry,
+    .passkey_confirm = auth_passkey_confirm,
+    .cancel = auth_cancel,
+};
+
+static struct bt_conn_auth_info_cb auth_info_cb = {
+    .pairing_complete = pairing_complete,
+    .pairing_failed = pairing_failed,
+};
+
 /* Settings handlers */
 static int settings_set(const char *name, size_t len, settings_read_cb read_cb,
                        void *cb_arg)
@@ -339,18 +408,26 @@ static void connected(struct bt_conn *conn, uint8_t err)
     memcpy(&keyboard_addr, bt_conn_get_dst(conn), sizeof(keyboard_addr));
     keyboard_paired = true;
     settings_save_one("ble_bridge/addr", &keyboard_addr, sizeof(keyboard_addr));
+    
+    /* Set security level for encrypted connection */
+    int sec_err = bt_conn_set_security(conn, BT_SECURITY_L2);
+    if (sec_err) {
+        LOG_WRN("Failed to set security level: %d", sec_err);
+        /* Continue anyway - keyboard might not require encryption */
+        /* Start discovery immediately */
+        discover_params.uuid = &uuid_hids.uuid;
+        discover_params.func = discover_func;
+        discover_params.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
+        discover_params.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
+        discover_params.type = BT_GATT_DISCOVER_PRIMARY;
 
-    /* Start discovery of HID Service */
-    discover_params.uuid = &uuid_hids.uuid;
-    discover_params.func = discover_func;
-    discover_params.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
-    discover_params.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
-    discover_params.type = BT_GATT_DISCOVER_PRIMARY;
-
-    err = bt_gatt_discover(conn, &discover_params);
-    if (err) {
-        LOG_ERR("Discover failed (err %d)", err);
-        return;
+        err = bt_gatt_discover(conn, &discover_params);
+        if (err) {
+            LOG_ERR("Discover failed (err %d)", err);
+        }
+    } else {
+        LOG_INF("Security level set to L2 (encrypted) - waiting for security");
+        /* Discovery will be triggered in security_changed callback */
     }
 }
 
@@ -367,6 +444,10 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
         current_conn = NULL;
     }
     k_mutex_unlock(&conn_mutex);
+    
+    /* Clear discovery state */
+    memset(&discover_params, 0, sizeof(discover_params));
+    memset(&subscribe_params, 0, sizeof(subscribe_params));
 
     /* Clear HID report on disconnect - but only if USB is ready */
     if (usb_configured && hid_dev) {
@@ -387,9 +468,39 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
     }
 }
 
+static void security_changed(struct bt_conn *conn, bt_security_t level,
+                            enum bt_security_err err)
+{
+    char addr[BT_ADDR_LE_STR_LEN];
+    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+    
+    if (!err) {
+        LOG_INF("Security changed: %s level %u", addr, level);
+        
+        /* If we just established security and haven't started discovery yet, do it now */
+        if (level >= BT_SECURITY_L2 && discover_params.func == NULL) {
+            LOG_INF("Security established, starting HID service discovery");
+            
+            discover_params.uuid = &uuid_hids.uuid;
+            discover_params.func = discover_func;
+            discover_params.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
+            discover_params.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
+            discover_params.type = BT_GATT_DISCOVER_PRIMARY;
+
+            int disc_err = bt_gatt_discover(conn, &discover_params);
+            if (disc_err) {
+                LOG_ERR("Discover failed after security (err %d)", disc_err);
+            }
+        }
+    } else {
+        LOG_ERR("Security failed: %s level %u err %d", addr, level, err);
+    }
+}
+
 BT_CONN_CB_DEFINE(conn_callbacks) = {
     .connected = connected,
     .disconnected = disconnected,
+    .security_changed = security_changed,
 };
 
 /* BLE Scanning */
@@ -650,12 +761,25 @@ int main(void)
     }
 
     LOG_INF("Bluetooth initialized");
+    
+    /* Register security callbacks */
+    err = bt_conn_auth_cb_register(&auth_cb_display);
+    if (err) {
+        LOG_ERR("Failed to register auth callbacks: %d", err);
+    }
+    
+    err = bt_conn_auth_info_cb_register(&auth_info_cb);
+    if (err) {
+        LOG_ERR("Failed to register auth info callbacks: %d", err);
+    }
+    
+    LOG_INF("Security callbacks registered");
 
     /* Register settings handler */
     settings_subsys_init();
     settings_register(&conf);
     
-    /* Load settings */
+    /* Load settings including bonds */
     settings_load();
 
     /* Try to reconnect to saved keyboard or start scanning */
@@ -686,5 +810,4 @@ int main(void)
 
     return 0;
 }
-
 
