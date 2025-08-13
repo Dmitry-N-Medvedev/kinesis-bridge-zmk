@@ -63,6 +63,7 @@ static const uint8_t hid_report_desc[] = {
 
 /* Device handles */
 static struct bt_conn *current_conn = NULL;
+static K_MUTEX_DEFINE(conn_mutex);  /* Mutex to protect current_conn access */
 static struct bt_gatt_subscribe_params subscribe_params;
 static struct bt_gatt_discover_params discover_params;
 static struct bt_uuid_16 uuid_hids = BT_UUID_INIT_16(BT_UUID_HIDS_VAL);
@@ -88,6 +89,9 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 #if DT_NODE_HAS_STATUS(SW0_NODE, okay)
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(SW0_NODE, gpios);
 static struct gpio_callback button_cb_data;
+static struct k_work button_work;
+static uint64_t button_press_time = 0;
+static bool button_double_press = false;
 #endif
 
 /* Target device name - change this to match your Kinesis */
@@ -284,10 +288,14 @@ static void connected(struct bt_conn *conn, uint8_t err)
 
     if (err) {
         LOG_ERR("Failed to connect to %s (%u)", addr, err);
+        
+        k_mutex_lock(&conn_mutex, K_FOREVER);
         if (current_conn) {
             bt_conn_unref(current_conn);
             current_conn = NULL;
         }
+        k_mutex_unlock(&conn_mutex);
+        
         /* Try to reconnect */
         k_sleep(K_SECONDS(1));
         if (keyboard_paired) {
@@ -299,7 +307,10 @@ static void connected(struct bt_conn *conn, uint8_t err)
     }
 
     LOG_INF("Connected: %s", addr);
+    
+    k_mutex_lock(&conn_mutex, K_FOREVER);
     current_conn = bt_conn_ref(conn);
+    k_mutex_unlock(&conn_mutex);
     
     /* Save keyboard address for reconnection */
     memcpy(&keyboard_addr, bt_conn_get_dst(conn), sizeof(keyboard_addr));
@@ -327,10 +338,12 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
     bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
     LOG_INF("Disconnected: %s (reason %u)", addr, reason);
 
+    k_mutex_lock(&conn_mutex, K_FOREVER);
     if (current_conn) {
         bt_conn_unref(current_conn);
         current_conn = NULL;
     }
+    k_mutex_unlock(&conn_mutex);
 
     /* Clear HID report on disconnect */
     memset(hid_report, 0, sizeof(hid_report));
@@ -417,7 +430,11 @@ void start_scan(void)
 {
     int err;
 
-    if (current_conn) {
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    bool already_connected = (current_conn != NULL);
+    k_mutex_unlock(&conn_mutex);
+    
+    if (already_connected) {
         LOG_DBG("Already connected, not scanning");
         return;
     }
@@ -440,7 +457,11 @@ void start_scan(void)
 
 void attempt_reconnect(void)
 {
-    if (current_conn) {
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    bool already_connected = (current_conn != NULL);
+    k_mutex_unlock(&conn_mutex);
+    
+    if (already_connected) {
         LOG_DBG("Already connected");
         return;
     }
@@ -467,24 +488,21 @@ void attempt_reconnect(void)
     }
 }
 
-/* Button handler for manual pairing trigger */
+/* Button work handler - runs in system workqueue context */
 #if DT_NODE_HAS_STATUS(SW0_NODE, okay)
-static void button_pressed(const struct device *dev, struct gpio_callback *cb,
-                          uint32_t pins)
+static void button_work_handler(struct k_work *work)
 {
-    static uint64_t last_press = 0;
-    uint64_t now = k_uptime_get();
-    
-    /* Detect double press (within 500ms) */
-    if ((now - last_press) < 500) {
+    if (button_double_press) {
         LOG_INF("Double press detected - clearing pairing and restarting");
         
         /* Disconnect if connected */
+        k_mutex_lock(&conn_mutex, K_FOREVER);
         if (current_conn) {
             bt_conn_disconnect(current_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
             bt_conn_unref(current_conn);
             current_conn = NULL;
         }
+        k_mutex_unlock(&conn_mutex);
         
         /* Clear saved keyboard address */
         keyboard_paired = false;
@@ -493,20 +511,42 @@ static void button_pressed(const struct device *dev, struct gpio_callback *cb,
         /* Clear settings */
         settings_save_one("ble_bridge/addr", NULL, 0);
         
-        /* Start fresh scan */
+        /* Start fresh scan after a delay */
         k_sleep(K_MSEC(100));
         start_scan();
         
-        last_press = 0;
+        button_double_press = false;
     } else {
-        LOG_INF("Button pressed - attempting reconnect");
-        last_press = now;
+        LOG_INF("Single press - attempting reconnect");
         
         /* Single press - try to reconnect */
-        if (!current_conn && keyboard_paired) {
+        k_mutex_lock(&conn_mutex, K_FOREVER);
+        bool should_reconnect = (!current_conn && keyboard_paired);
+        k_mutex_unlock(&conn_mutex);
+        
+        if (should_reconnect) {
             attempt_reconnect();
         }
     }
+}
+
+/* Button ISR handler - minimal work, just schedules the work item */
+static void button_pressed(const struct device *dev, struct gpio_callback *cb,
+                          uint32_t pins)
+{
+    uint64_t now = k_uptime_get();
+    
+    /* Detect double press (within 500ms) */
+    if ((now - button_press_time) < 500) {
+        button_double_press = true;
+    } else {
+        button_double_press = false;
+    }
+    
+    button_press_time = now;
+    
+    /* Submit work to system workqueue - non-blocking */
+    k_work_submit(&button_work);
 }
 #endif
 
@@ -545,6 +585,11 @@ int main(void)
         LOG_ERR("Failed to configure button interrupt: %d", err);
         return -1;
     }
+    
+    /* Initialize button work item */
+    k_work_init(&button_work, button_work_handler);
+    
+    /* Set up GPIO callback */
     gpio_init_callback(&button_cb_data, button_pressed, BIT(button.pin));
     gpio_add_callback(button.port, &button_cb_data);
 #endif
@@ -602,7 +647,11 @@ int main(void)
         k_sleep(K_SECONDS(1));
         
         /* Blink LED if not connected */
-        if (!current_conn) {
+        k_mutex_lock(&conn_mutex, K_FOREVER);
+        bool is_connected = (current_conn != NULL);
+        k_mutex_unlock(&conn_mutex);
+        
+        if (!is_connected) {
 #if DT_NODE_HAS_STATUS(LED0_NODE, okay)
             gpio_pin_toggle_dt(&led);
 #endif
